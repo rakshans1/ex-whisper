@@ -1,0 +1,6 @@
+# nix
+.direnv/
+.nix-hex/
+.nix-mix/
+
+.elixir_ls
