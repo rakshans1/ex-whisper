@@ -1,0 +1,25 @@
+#!/bin/bash
+
+set -e
+
+run_server() {
+  ls *.exs | entr -r elixir run.exs
+}
+
+fn_exists() { declare -F "$1" >/dev/null; }
+
+
+
+run() {
+  local cmd=$1
+  shift
+  local fn="run_$cmd"
+
+  if fn_exists $fn; then
+    $fn ${@}
+  else
+    eval $cmd "${@}"
+  fi
+}
+
+run ${@}

@@ -9,11 +9,15 @@ let
   basePackages = [
     (import ./nix/default.nix { inherit pkgs; })
     pkgs.niv
+    entr
+    cmake
+    gcc12
+    clang_13
   ];
 
   inputs =  basePackages ++ lib.optionals stdenv.isLinux [ inotify-tools ]
     ++ lib.optionals stdenv.isDarwin
-    (with darwin.apple_sdk.frameworks; [ CoreFoundation CoreServices ]);
+    (with darwin.apple_sdk.frameworks; [ CoreFoundation CoreServices SystemConfiguration Foundation ]);
 
   hooks = ''
     # this allows mix to work on the local directory
@@ -28,6 +32,10 @@ let
     # keep your shell history in iex
     export ERL_AFLAGS="-kernel shell_history enabled"
 
+    export LD_LIBRARY_PATH=${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH
+
+
+    export PATH=bin:$PATH
     export MIX_ENV=dev
   '';
 in
