@@ -1,0 +1,20 @@
+#!/bin/bash
+
+GIT_REVISION=$(git rev-parse HEAD)
+
+ORANGE='\033[0;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+printf "${ORANGE}%-23s${NC}" "GIT_REVISION"
+printf "${PURPLE}%s${NC}" ${GIT_REVISION}
+echo -e "\n"
+
+echo -e "${BLUE}Commands${NC}"
+echo -e "${BLUE}---------------------------------------------------------------${NC}"
+
+printf "${CYAN}%-23s${NC}" "run server"
+printf "%s" "Start server"
+echo -e "\n"
