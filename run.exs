@@ -6,7 +6,7 @@ Application.put_env(:ex_whisper, ExWhisper.Endpoint,
   url: [host: host],
   http: [
     ip: {0, 0, 0, 0, 0, 0, 0, 0},
-    port: String.to_integer(System.get_env("PORT") || "8000"),
+    port: String.to_integer(System.get_env("PORT") || "4000"),
     transport_options: [socket_opts: [:inet6]]
   ],
   server: true,
@@ -104,7 +104,7 @@ defmodule ExWhisper.AudioLive do
   def mount(_params, _session, socket) do
     {:ok,
      socket
-     |> assign(label: nil, running: false, task_ref: nil)
+     |> assign(text: nil, running: false, task_ref: nil, uploading: false)
      |> allow_upload(:audio,
        accept: [".mp3", ".wav", ".aac"],
        max_entries: 1,
@@ -122,12 +122,18 @@ defmodule ExWhisper.AudioLive do
         <form class="m-0 flex flex-col items-center space-y-2 mt-8" phx-change="noop" phx-submit="noop">
           <.audio_input id="audio" upload={@uploads.audio} height={224} width={224} />
         </form>
-        <div class="mt-6 flex space-x-1.5 items-center text-gray-600 text-xl">
+          <%= if @uploading do %>
+            <div class="mt-6 flex space-x-1.5 items-center text-gray-600 text-xl">
+              <span>Uploading:</span>
+              <.spinner />
+            </div>
+          <% end %>
+        <div class="mt-6 flex flex-col space-x-1.5 items-center text-gray-600 text-xl">
           <span>Text:</span>
           <%= if @running do %>
             <.spinner />
           <% else %>
-            <span class="text-gray-900 font-medium"><%= @label || "?" %></span>
+            <div class="text-gray-900 font-medium overflow-y-scroll h-[300px]"><%= @text || "?" %></div>
           <% end %>
         </div>
         <p class="text-lg text-center max-w-3xl mx-auto fixed top-2 right-2">
@@ -178,7 +184,7 @@ defmodule ExWhisper.AudioLive do
   def handle_progress(:audio, entry, socket) do
     if entry.done? do
       socket
-      |> consume_uploaded_entries(:audio, fn meta, _ -> 
+      |> consume_uploaded_entries(:audio, fn meta, _ ->
         dest = Path.join(["static", "uploads", Path.basename(meta.path)])
         File.cp!(meta.path, dest)
         {:ok, dest}
@@ -188,11 +194,17 @@ defmodule ExWhisper.AudioLive do
           {:noreply, socket}
 
         [path] ->
-          task = Task.async(fn -> Nx.Serving.batched_run(ExWhisper.Serving, {:file, path}) end)
-          {:noreply, assign(socket, running: true, task_ref: task.ref)}
+          pid = self()
+
+          task =
+            ExWhisper.Audio.speech_to_text(path, 20, fn ss, text ->
+              send(pid, {:segment_transcribed, {ss, text}})
+            end)
+
+          {:noreply, assign(socket, running: true, task_ref: task.ref, uploading: false)}
       end
     else
-      {:noreply, socket}
+      {:noreply, assign(socket, uploading: true)}
     end
   end
 
@@ -201,10 +213,21 @@ defmodule ExWhisper.AudioLive do
     {:noreply, socket}
   end
 
- def handle_info({ref, result}, %{assigns: %{task_ref: ref}} = socket) do
+  def handle_info({:segment_transcribed, result}, socket) do
+    {ss, text} = result
+
+    text =
+      case socket.assigns.text do
+        nil -> text
+        t -> t <> text
+      end
+
+    {:noreply, assign(socket, running: false, text: text)}
+  end
+
+  def handle_info({ref, result}, %{assigns: %{task_ref: ref}} = socket) do
     Process.demonitor(ref, [:flush])
-    %{results: [%{text: text}]} = result
-    {:noreply, assign(socket, label: text, running: false)}
+    {:noreply, socket}
   end
 end
 
@@ -229,6 +252,44 @@ defmodule ExWhisper.Endpoint do
   socket("/live", Phoenix.LiveView.Socket)
 
   plug(ExWhisper.Router)
+end
+
+defmodule ExWhisper.Audio do
+  def speech_to_text(path, chunk_time, func) do
+    Task.async(fn ->
+      stat = ExWhisper.Audio.get_stat(path)
+      duration = string_to_numeric(stat |> Map.get("duration")) |> ceil()
+
+      0..duration//chunk_time
+      |> Task.async_stream(
+        fn ss ->
+          args = ~w(-ac 1 -ar 16k -f f32le -ss #{ss} -t #{chunk_time} -v quiet -)
+          {data, 0} = System.cmd("ffmpeg", ["-i", path] ++ args)
+          {ss, Nx.Serving.batched_run(ExWhisper.Serving, Nx.from_binary(data, :f32))}
+        end,
+        max_concurrency: 4,
+        timeout: :infinity
+      )
+      |> Enum.map(fn {:ok, {ss, %{results: [%{text: text}]}}} ->
+        func.(ss, text)
+      end)
+    end)
+  end
+
+  def get_stat(path) do
+    args = ~w(-v 0 -print_format json -show_streams -show_format)
+    {data, 0} = System.cmd("ffprobe", ["-i", path] ++ args)
+    data |> Jason.decode!() |> Map.get("streams") |> Enum.at(0)
+  end
+
+  @spec string_to_numeric(binary()) :: float() | number() | nil
+  defp string_to_numeric(val) when is_binary(val),
+    do: _string_to_numeric(Integer.parse(val), val)
+
+  defp _string_to_numeric(:error, _val), do: nil
+  defp _string_to_numeric({num, ""}, _val), do: num
+  defp _string_to_numeric({num, ".0"}, _val), do: num
+  defp _string_to_numeric({_num, _str}, val), do: elem(Float.parse(val), 0)
 end
 
 # Application startup

@@ -1,0 +1,12 @@
+# flyctl launch added from .elixir_ls/.gitignore
+.elixir_ls/**/*
+
+# flyctl launch added from .gitignore
+# nix
+**/.direnv
+**/.nix-hex
+**/.nix-mix
+
+**/.elixir_ls
+
+**/static

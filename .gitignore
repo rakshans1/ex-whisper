@@ -4,3 +4,5 @@
 .nix-mix/
 
 .elixir_ls
+
+static
